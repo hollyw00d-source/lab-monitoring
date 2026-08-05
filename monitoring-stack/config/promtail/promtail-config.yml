@@ -9,13 +9,25 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
+  # Receives remote syslog from pfSense, Omada Controller, or anything else
+  # that can send syslog. Point those devices at <this-vm-ip>:1514 (UDP or TCP).
   - job_name: syslog
     syslog:
       listen_address: 0.0.0.0:1514
-      idle_timeout: 1h
-      label_structured_data: yes
-      labels:
-        job: syslog
+      listen_protocol: udp
+      idle_timeout: 60s
+      label_structured_data: true
     relabel_configs:
-      - source_labels: ['__syslog_message_hostname']
-        target_label: 'host'
+      - source_labels: ["__syslog_message_hostname"]
+        target_label: "host"
+      - source_labels: ["__syslog_message_app_name"]
+        target_label: "app"
+
+  # Local system logs from this monitoring VM itself
+  - job_name: local-syslog
+    static_configs:
+      - targets: ["localhost"]
+        labels:
+          job: varlogs
+          host: monitoring-vm
+          __path__: /host/var/log/*.log

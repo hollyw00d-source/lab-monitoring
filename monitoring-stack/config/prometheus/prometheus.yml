@@ -3,10 +3,32 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'prometheus'
+  - job_name: "prometheus"
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ["localhost:9090"]
 
-  - job_name: 'node_exporter'
+  - job_name: "node-exporter"
     static_configs:
-      - targets: ['node-exporter:9100']
+      - targets: ["node-exporter:9100"]
+        labels:
+          host: "monitoring-vm"
+
+  # Proxmox host/VM stats via pve-exporter
+  - job_name: "pve"
+    static_configs:
+      - targets: ["<PROXMOX_HOST_IP>:8006"]   # replace with your Proxmox host IP
+    metrics_path: /pve
+    params:
+      module: [default]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: pve-exporter:9221
+
+  # pfSense metrics via node_exporter package (installed on pfSense itself) or Telegraf http_listener
+  - job_name: "pfsense"
+    static_configs:
+      - targets: ["<PFSENSE_IP>:9100"]   # replace once node_exporter/Telegraf is set up on pfSense

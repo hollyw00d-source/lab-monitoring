@@ -1,0 +1,5 @@
+default:
+  user: pve-exporter@pve
+  token_name: monitoring
+  token_value: ${PVE_EXPORTER_TOKEN}
+  verify_ssl: false
