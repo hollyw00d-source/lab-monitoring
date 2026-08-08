@@ -32,9 +32,10 @@ services:
     image: grafana/promtail:3.3.2
     container_name: promtail
     restart: unless-stopped
-    ports:
-      - "1514:1514/udp"   # syslog receiver -- point pfSense/Omada here
-      - "1514:1514/tcp"
+    # NOTE: no ports published here. Port 1514 (syslog) is intentionally owned
+    # by rsyslog running directly on the host, not by this container -- see
+    # host-config/10-remote.conf and the README for why. Promtail only reads
+    # the log files rsyslog writes, via the /var/log bind mount below.
     volumes:
       - ./config/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
       - /var/log:/host/var/log:ro

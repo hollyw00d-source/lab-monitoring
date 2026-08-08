@@ -13,10 +13,11 @@ scrape_configs:
         labels:
           host: "monitoring-vm"
 
-  # Proxmox host/VM stats via pve-exporter
+  # Proxmox host/VM stats via pve-exporter.
+  # Replace 192.168.1.141 with your own Proxmox host IP.
   - job_name: "pve"
     static_configs:
-      - targets: ["<PROXMOX_HOST_IP>:8006"]   # replace with your Proxmox host IP
+      - targets: ["192.168.1.141:8006"]
     metrics_path: /pve
     params:
       module: [default]
@@ -28,7 +29,12 @@ scrape_configs:
       - target_label: __address__
         replacement: pve-exporter:9221
 
-  # pfSense metrics via node_exporter package (installed on pfSense itself) or Telegraf http_listener
+  # pfSense metrics via the Telegraf package (System > Package Manager on pfSense),
+  # configured with a [[outputs.prometheus_client]] block listening on :9273.
+  # NOTE: this is deliberately NOT node_exporter -- pfSense is FreeBSD-based and
+  # can't run node_exporter, which is Linux-only. Telegraf is cross-platform and
+  # has an official pfSense package, which is why the stack uses it here instead.
+  # Replace 192.168.1.1 with your own pfSense IP.
   - job_name: "pfsense"
     static_configs:
-      - targets: ["<PFSENSE_IP>:9100"]   # replace once node_exporter/Telegraf is set up on pfSense
+      - targets: ["192.168.1.1:9273"]

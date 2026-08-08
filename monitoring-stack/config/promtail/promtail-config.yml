@@ -9,19 +9,21 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # Receives remote syslog from pfSense, Omada Controller, or anything else
-  # that can send syslog. Point those devices at <this-vm-ip>:1514 (UDP or TCP).
-  - job_name: syslog
-    syslog:
-      listen_address: 0.0.0.0:1514
-      listen_protocol: udp
-      idle_timeout: 60s
-      label_structured_data: true
-    relabel_configs:
-      - source_labels: ["__syslog_message_hostname"]
-        target_label: "host"
-      - source_labels: ["__syslog_message_app_name"]
-        target_label: "app"
+  # Remote syslog from pfSense / Omada Controller / anything else, RELAYED via
+  # rsyslog running on the host (see host-config/10-remote.conf).
+  #
+  # Why not Promtail's built-in `syslog` receiver? It only parses strict
+  # RFC5424-formatted syslog. pfSense (and most consumer network gear) sends
+  # classic RFC3164 ("BSD syslog"), which Promtail's parser rejects outright
+  # with "expecting a version value in the range 1-999". Rather than fight
+  # that, rsyslog sits in front, accepts either format, and writes plain log
+  # files -- which Promtail then tails like any other file.
+  - job_name: remote-syslog
+    static_configs:
+      - targets: ["localhost"]
+        labels:
+          job: remote_syslog
+          __path__: /host/var/log/remote/*/syslog.log
 
   # Local system logs from this monitoring VM itself
   - job_name: local-syslog

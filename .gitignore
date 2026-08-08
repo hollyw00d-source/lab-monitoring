@@ -1,0 +1,8 @@
+# Secrets -- never commit
+.env
+config/prometheus/pve-exporter.yml
+
+# Editor/OS cruft
+.vscode/
+.DS_Store
+*.log

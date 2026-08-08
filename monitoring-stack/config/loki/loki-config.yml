@@ -32,4 +32,5 @@ limits_config:
 
 compactor:
   working_directory: /loki/compactor
+  delete_request_store: filesystem   # required by Loki 3.x whenever retention_enabled is true
   retention_enabled: true

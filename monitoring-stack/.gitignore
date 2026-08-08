@@ -1,0 +1,5 @@
+﻿.env
+config/prometheus/pve-exporter.yml
+.vscode/
+.DS_Store
+*.log
