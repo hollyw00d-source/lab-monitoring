@@ -41,7 +41,7 @@ flowchart TB
     PVE -- "API token, read-only" --> PVEE
     PFS -- "metrics" --> TEL
     PFS -- "syslog" --> RSYS
-    OMD -. "syslog — not yet connected" .-> RSYS
+    OMD -- "syslog" --> RSYS
 
     PVEE --> PROM
     TEL --> PROM
@@ -52,8 +52,6 @@ flowchart TB
 
     PROM --> GRAF
     LOKI --> GRAF
-
-    style OMD stroke-dasharray: 5 5
 ```
 
 **How to read this:** metrics and logs are two entirely separate pipelines that happen to converge in the same Grafana UI. Metrics are numbers over time (CPU %, memory, uptime) pulled by Prometheus on a schedule. Logs are text events (firewall denied a connection, a service restarted) pushed to Loki as they happen. They use different tools because they're fundamentally different data shapes — this is the standard split in modern observability, not something specific to this project.
@@ -71,9 +69,11 @@ This was the trickiest problem in the whole build, and worth explaining because 
 
 The root cause: Promtail's receiver only understands **RFC5424** syslog (a newer, structured format with a version number). pfSense — like most consumer and enterprise network gear — sends the older **RFC3164** ("BSD syslog") format by default, which has no version field at all. Even switching pfSense's own syslog setting to "RFC5424 mode" didn't fully resolve it, since pfSense's implementation isn't strict enough for Promtail's parser.
 
-The fix: **rsyslog**, a mature and far more permissive syslog daemon (already installed by default on Ubuntu Server), sits in front and accepts either format without complaint. Rather than trying to forward or reformat the messages, it just writes them to plain text log files — one folder per source hostname. Promtail then reads those exactly like it reads any other log file on disk, which sidesteps the syslog-parsing problem entirely rather than solving it head-on.
+The fix: **rsyslog**, a mature and far more permissive syslog daemon (already installed by default on Ubuntu Server), sits in front and accepts either format without complaint. Rather than trying to forward or reformat the messages, it just writes them to plain text log files — one folder per source hostname (or IP, if the sender doesn't include a hostname — this is how Omada Controller's logs are labeled). Promtail then reads those exactly like it reads any other log file on disk, which sidesteps the syslog-parsing problem entirely rather than solving it head-on.
 
 One follow-up bug from this: the first version of the rsyslog rule was a blanket `*.* → write to file`, which — because rsyslog processes local system messages through the same default pipeline — ended up also capturing the VM's own local logs (Docker, kernel, systemd) alongside the actual remote device logs. The fix was binding the network-only inputs (`imudp`/`imtcp`) to their own dedicated **ruleset**, so local messages never enter that code path at all. This is a good example of a fix that "worked" on the first pass but wasn't actually correct until tested more carefully.
+
+Because this relay is protocol-agnostic (it doesn't care whether a sender uses RFC3164 or RFC5424, it just writes lines to a file), adding **Omada Controller** as a second log source afterward required zero new infrastructure — same port, same rsyslog rule, same Promtail scrape path. That reusability was the actual payoff of solving the syslog-parsing problem properly the first time, rather than special-casing a fix just for pfSense.
 
 ### Why a dedicated, scoped API token for Proxmox instead of using root?
 The Proxmox exporter needs read access to cluster/VM stats, and nothing else. Rather than handing it the root account (which could do anything, including destroy VMs), it's given its own user (`pve-exporter@pve`) with a token scoped to the `PVEAuditor` role — read-only by design. If that token ever leaked, the blast radius is "someone can view stats," not "someone can delete every VM." This is standard least-privilege practice, just applied at homelab scale.
@@ -91,7 +91,7 @@ The DHCP pool (`.10–.150`) is for anything that just needs *an* address — la
 | Proxmox | CPU, memory, disk, VM/node status | `pve-exporter` polls the Proxmox API on a schedule using a read-only token; Prometheus scrapes `pve-exporter` |
 | pfSense | CPU, memory, interface throughput, states | Telegraf (running on pfSense) exposes a Prometheus-format endpoint; Prometheus scrapes it directly |
 | pfSense | Firewall events, DHCP leases, system events | pfSense's native remote syslog → rsyslog (on the monitoring VM) → log file → Promtail → Loki |
-| Omada Controller | *(planned, not yet connected)* | Will use the same rsyslog relay path as pfSense once configured |
+| Omada Controller | Controller-level system events, config changes, alerts (note: this is controller-level logging only, not full per-device traffic logs from each switch/AP — Omada doesn't currently expose that) | Omada's native remote syslog → rsyslog (on the monitoring VM) → log file → Promtail → Loki |
 | Monitoring VM itself | CPU, memory, disk | `node-exporter` on the same VM, scraped by Prometheus |
 
 ## Repository structure
@@ -150,22 +150,25 @@ Set pfSense's IP in the `pfsense` job in `prometheus.yml`.
 ### 4. pfSense — logs
 **Status → System Logs → Settings → Remote Logging** → point at `<monitoring-vm-ip>:1514`.
 
-### 5. rsyslog relay (on the VM's host OS, not Docker)
+### 5. Omada Controller — logs
+**Logs → Advanced → Remote Logging** → enable, set Syslog Server IP/Hostname to `<monitoring-vm-ip>` and port to `1514`.
+
+### 6. rsyslog relay (on the VM's host OS, not Docker)
 ```bash
 sudo cp host-config/10-remote.conf /etc/rsyslog.d/10-remote.conf
 sudo systemctl restart rsyslog
 ```
 
-### 6. Launch
+### 7. Launch
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-### 7. Verify
+### 8. Verify
 - Grafana: `http://<vm-ip>:3000` — Prometheus and Loki should already be listed under Connections → Data sources
 - Prometheus targets: `http://<vm-ip>:9090/targets` — all jobs `UP`
-- Loki (Grafana Explore): query `{job="remote_syslog"}` for pfSense log lines
+- Loki (Grafana Explore): query `{job="remote_syslog"}` for pfSense and Omada log lines
 
 ## Debugging log — problems hit and how they were diagnosed
 
@@ -176,10 +179,10 @@ Keeping this because the debugging process is arguably more demonstrative of und
 - **pve-exporter returned 401 Unauthorized** repeatedly, across several attempted fixes. Diagnosed by testing the token directly against the Proxmox API with `curl` and `PVEAPIToken=`, bypassing the exporter entirely — this isolated whether the problem was the token itself or the exporter's config parsing. Root cause ended up being a token that needed regenerating, plus an earlier mistake concatenating `user@realm!tokenname` into a single field instead of two separate config keys.
 - **Promtail showed a scrape job as "0/0 ready"** despite the target file existing with real content. Diagnosed by checking file permissions directly (`ls -la`) — the file was `640`, owned by a user/group the Promtail container's process couldn't read. Fixed with `$FileCreateMode 0644` in rsyslog's config.
 - **pfSense logs were arriving, but so was the VM's own local log noise, mixed into the same stream.** Traced to a too-broad rsyslog rule matching all messages regardless of source. Fixed by binding the network listeners to a dedicated `ruleset`, isolating them from local message processing.
+- **Omada Controller's logs showed up filed under its raw IP address** (`192.168.1.45`) rather than a hostname, unlike pfSense. Not a bug — Omada's syslog messages simply don't include a hostname field the way pfSense's do, and the rsyslog template (`%HOSTNAME%`) falls back to the source IP when that's the case. No fix needed, just worth knowing when searching Loki for Omada-specific logs.
 
 ## Roadmap / not yet done
 
-- Wire up Omada Controller's syslog output (same rsyslog relay, no new infrastructure needed)
-- Build actual Grafana dashboards — data sources are connected, but no custom dashboards exist yet
+- Build actual Grafana dashboards — data sources and log sources are all connected, but no custom dashboards exist yet
 - Investigate why pfSense log lines currently appear to arrive duplicated in Loki
 - A reverse proxy for friendly hostnames without needing to remember ports (e.g. `grafana.home.lab` instead of `192.168.1.160:3000`) — deliberately scoped as a *separate*, later project from any future internet-facing reverse proxy for self-hosted game servers, since the security requirements for internal-only vs. internet-exposed traffic are meaningfully different.
