@@ -1,4 +1,4 @@
-![Monitor Lizard](/monitoring-stack/images/monitor.jpg)
+![Monitor Lizard](https://blog.serverfault.com/files/2012/01/Xzibit_Monitoring.jpg)
 
 # Homelab Monitoring Stack
 
