@@ -1,3 +1,5 @@
+![Monitor Lizard](https://blog.serverfault.com/files/2012/01/Xzibit_Monitoring.jpg)
+
 # Homelab Monitoring Stack
 
 A centralized logging and metrics platform for a self-hosted homelab, built on **Grafana, Loki, and Prometheus**, running as Docker containers on a dedicated Ubuntu VM inside Proxmox. It pulls metrics and logs from three systems that previously had no unified visibility: **Proxmox** (the hypervisor), **pfSense** (the router/firewall), and **Omada Controller** (network/Wi-Fi management).
