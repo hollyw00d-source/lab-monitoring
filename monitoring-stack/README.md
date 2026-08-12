@@ -1,4 +1,4 @@
-![Monitor Lizard](./images/monitor.jpg)
+![Monitor Lizard](/monitoring-stack/images/monitor.jpg)
 
 # Homelab Monitoring Stack
 
